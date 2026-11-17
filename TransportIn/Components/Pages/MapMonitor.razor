@@ -1,0 +1,673 @@
+﻿@page "/map-monitor"
+@layout TransportIn.Components.Layout.AdminLayout
+@rendermode InteractiveServer
+@inject TransportIn.Services.AuthService AuthService
+@inject TransportIn.Services.FleetService FleetService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="admin-layout">
+    <!-- ===== САЙДБАР ===== -->
+    <aside class="admin-sidebar">
+        <div class="sidebar-header">
+            <h4><i class="bi bi-truck-front-fill"></i> TransportIn</h4>
+            <small>Диспетчерський пульт</small>
+        </div>
+        <nav class="mt-3">
+            @if (AuthService.CurrentUser?.Role == TransportIn.Models.UserRole.Admin)
+            {
+                <a class="nav-link @(IsActive("/admin-dashboard") ? "active" : "")" href="/admin-dashboard"><i class="bi bi-grid-1x2-fill"></i> Панель адміна</a>
+            }
+            @if (AuthService.CurrentUser?.Role == TransportIn.Models.UserRole.Manager)
+            {
+                <a class="nav-link @(IsActive("/manager-dashboard") ? "active" : "")" href="/manager-dashboard"><i class="bi bi-people-fill"></i> Менеджер</a>
+            }
+            @if (AuthService.CurrentUser?.Role == TransportIn.Models.UserRole.Driver)
+            {
+                <a class="nav-link @(IsActive("/driver-dashboard") ? "active" : "")" href="/driver-dashboard"><i class="bi bi-person-badge-fill"></i> Водій</a>
+            }
+            <a class="nav-link @(IsActive("/map-monitor") ? "active" : "")" href="/map-monitor"><i class="bi bi-map"></i> Карта моніторингу</a>
+            @if (AuthService.CurrentUser?.Role != TransportIn.Models.UserRole.Driver)
+            {
+                <a class="nav-link @(IsActive("/history") ? "active" : "")" href="/history"><i class="bi bi-clock-history"></i> Історія</a>
+            }
+            <a class="nav-link @(IsActive("/counter") ? "active" : "")" href="/counter"><i class="bi bi-graph-up-arrow"></i> Аналітика</a>
+        </nav>
+    </aside>
+
+    <!-- ===== ОСНОВНИЙ КОНТЕНТ ===== -->
+    <main class="admin-main">
+        <div class="top-navbar">
+            <div>
+                <h5 class="mb-0" style="font-weight: 600; color: var(--text-primary);">Моніторинг перевезень</h5>
+                <small style="color: var(--text-secondary);">Відстеження ТЗ та маршрутів у реальному часі</small>
+            </div>
+            <div class="user-info">
+                <div class="text-end d-none d-sm-block">
+                    <div class="user-name">@AuthService.CurrentUser?.FullName</div>
+                    <div class="user-role">@AuthService.CurrentUser?.Role</div>
+                </div>
+                <div class="user-avatar">@GetInitials(AuthService.CurrentUser?.FullName)</div>
+            </div>
+        </div>
+
+        <div class="content-section">
+            <div class="map-grid">
+                <!-- ===== Ліва панель ===== -->
+                <div class="map-sidebar">
+
+                    <!-- Легенда + фільтр -->
+                    <div class="modern-card">
+                        <div class="card-header-custom">
+                            <h5><span class="header-icon blue"><i class="bi bi-droplet-half"></i></span> Статуси ТЗ</h5>
+                        </div>
+                        <div class="card-body-custom">
+                            <div class="legend-item" style="cursor:pointer;@(statusFilter == "all" ? "font-weight:700" : "")" @onclick='() => SetFilter("all")'>
+                                <i class="bi bi-collection me-2"></i> Усі <span class="ms-auto">@vehicles.Count</span>
+                            </div>
+                            <div class="legend-item" style="cursor:pointer;@(statusFilter == "free" ? "font-weight:700" : "")" @onclick='() => SetFilter("free")'>
+                                <span class="dot free"></span> Вільний <span class="ms-auto">@Count("free")</span>
+                            </div>
+                            <div class="legend-item" style="cursor:pointer;@(statusFilter == "moving" ? "font-weight:700" : "")" @onclick='() => SetFilter("moving")'>
+                                <span class="dot moving"></span> В дорозі <span class="ms-auto">@Count("moving")</span>
+                            </div>
+                            <div class="legend-item" style="cursor:pointer;@(statusFilter == "loading" ? "font-weight:700" : "")" @onclick='() => SetFilter("loading")'>
+                                <span class="dot loading"></span> Завантаження / Розвантаження <span class="ms-auto">@Count("loading")</span>
+                            </div>
+                            <div class="legend-item" style="cursor:pointer;@(statusFilter == "blocked" ? "font-weight:700" : "")" @onclick='() => SetFilter("blocked")'>
+                                <span class="dot blocked"></span> Заблоковано / Тривога <span class="ms-auto">@Count("blocked")</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Список ТЗ -->
+                    <div class="modern-card">
+                        <div class="card-header-custom">
+                            <h5><span class="header-icon green"><i class="bi bi-truck"></i></span> Активні ТЗ</h5>
+                            <span class="badge-count">@FilteredVehicles().Count()</span>
+                        </div>
+                        <div class="card-body-custom p-0">
+                            <div class="vehicle-list">
+                                @if (!isReady)
+                                {
+                                    <div class="p-3" style="color:var(--text-secondary);font-size:.85rem">
+                                        <i class="bi bi-hourglass-split me-1"></i> Будуємо маршрути…
+                                    </div>
+                                }
+                                @foreach (var v in FilteredVehicles())
+                                {
+                                    <div class="vehicle-row" style="cursor:pointer;@(selectedId == v.Plate ? "background:rgba(59,130,246,.15)" : "")" @onclick="() => SelectVehicle(v.Plate)">
+                                        <span class="dot @v.Status"></span>
+                                        <div class="flex-grow-1">
+                                            <div class="veh-model">@v.Model</div>
+                                            <div class="veh-plate">@v.Plate · @StatusLabel(v.Status)</div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Деталі обраного ТЗ -->
+                    @if (SelectedVehicle() is { } sv)
+                    {
+                        <div class="modern-card" style="border:1px solid var(--primary-blue)">
+                            <div class="card-header-custom">
+                                <h5><span class="header-icon blue"><i class="bi bi-info-circle"></i></span> @sv.Model</h5>
+                                <button class="btn-modern btn-danger-modern py-1 px-2" @onclick="ClearSelection"><i class="bi bi-x-lg"></i></button>
+                            </div>
+                            <div class="card-body-custom" style="font-size:.85rem">
+                                <div><span style="color:var(--text-secondary)">Номер:</span> <span class="code-text">@sv.Plate</span></div>
+                                <div><span style="color:var(--text-secondary)">Водій:</span> @(string.IsNullOrEmpty(sv.Driver) ? "—" : sv.Driver)</div>
+                                <div><span style="color:var(--text-secondary)">Статус:</span> <span class="dot @sv.Status"></span> @StatusLabel(sv.Status)</div>
+                                <div><span style="color:var(--text-secondary)">Швидкість:</span> @sv.Speed км/год <small style="color:var(--text-secondary)">(симуляція)</small></div>
+                                @if (sv.Pts != null)
+                                {
+                                    <div><span style="color:var(--text-secondary)">Маршрут:</span> @sv.RouteName</div>
+                                    <div><span style="color:var(--text-secondary)">Пройдено:</span> @ProgressPercent(sv)%</div>
+                                }
+                                @if (!string.IsNullOrEmpty(sv.Note))
+                                {
+                                    <div class="mt-2 p-2" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:6px;color:#fbbf24">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i> @sv.Note
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Шари -->
+                    <div class="modern-card">
+                        <div class="card-header-custom">
+                            <h5><span class="header-icon amber"><i class="bi bi-layers"></i></span> Шари карти</h5>
+                        </div>
+                        <div class="card-body-custom">
+                            <label class="form-check-modern d-block mb-2"><input type="checkbox" @bind="showRoutes" @bind:after="ApplyLayers" /> Маршрути</label>
+                            <label class="form-check-modern d-block mb-2"><input type="checkbox" @bind="showZones" @bind:after="ApplyLayers" /> Зони загроз</label>
+                            <button class="btn-action w-100 mt-1" @onclick="ResetView"><i class="bi bi-arrows-fullscreen"></i> Показати весь Київ</button>
+                        </div>
+                    </div>
+
+                    <!-- Зони загроз -->
+                    <div class="modern-card">
+                        <div class="card-header-custom">
+                            <h5><span class="header-icon" style="background:rgba(239,68,68,.15);color:#f87171"><i class="bi bi-shield-exclamation"></i></span> Зони загроз</h5>
+                            <span class="badge-count">@zones.Count</span>
+                        </div>
+                        <div class="card-body-custom">
+                            @foreach (var z in zones)
+                            {
+                                <div class="d-flex justify-content-between align-items-center mb-2" style="font-size:.82rem">
+                                    <div style="cursor:pointer" @onclick="() => FlyToZone(z)">
+                                        <span>@(z.Level == "danger" ? "⛔" : "⚠️")</span> <strong>@z.Title</strong>
+                                        <div style="color:var(--text-secondary)">@z.Radius м · @(z.Level == "danger" ? "блокує рух" : "сповільнює")</div>
+                                    </div>
+                                    @if (CanEditZones)
+                                    {
+                                        <button class="btn-action cancel" style="padding:.15rem .5rem" @onclick="() => RemoveZone(z)" title="Видалити"><i class="bi bi-trash"></i></button>
+                                    }
+                                </div>
+                            }
+                            @if (zones.Count == 0)
+                            {
+                                <div style="color:var(--text-secondary);font-size:.82rem">Зон немає</div>
+                            }
+
+                            @if (CanEditZones)
+                            {
+                                <hr style="border-color:var(--border-color)" />
+                                <label class="form-label-modern">Назва</label>
+                                <input class="dark-input w-100 mb-2" @bind="newZoneTitle" placeholder="Напр. Перекриття мосту" />
+                                <div class="row g-2 mb-2">
+                                    <div class="col-6">
+                                        <label class="form-label-modern">Радіус (м)</label>
+                                        <input type="number" class="dark-input w-100" @bind="newZoneRadius" min="100" max="5000" step="50" />
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label-modern">Рівень</label>
+                                        <select class="dark-input w-100" @bind="newZoneLevel">
+                                            <option value="danger">Небезпека (стоп)</option>
+                                            <option value="warning">Увага (повільно)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                @if (!drawing)
+                                {
+                                    <button class="btn-modern btn-add w-100" style="height:auto;padding:.5rem" @onclick="StartDrawing"><i class="bi bi-geo-alt"></i> Поставити на карті</button>
+                                }
+                                else
+                                {
+                                    <button class="btn-action w-100" @onclick="StopDrawing"><i class="bi bi-x-circle"></i> Скасувати</button>
+                                }
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Події -->
+                    <div class="modern-card">
+                        <div class="card-header-custom">
+                            <h5><span class="header-icon amber"><i class="bi bi-bell"></i></span> Події</h5>
+                        </div>
+                        <div class="card-body-custom" style="font-size:.8rem">
+                            @if (alerts.Count == 0)
+                            {
+                                <div style="color:var(--text-secondary)">Поки що тихо</div>
+                            }
+                            @foreach (var a in alerts)
+                            {
+                                <div class="mb-1" style="color:var(--text-secondary)">@a</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== Карта ===== -->
+                <div class="map-wrap">
+                    <div style="position:relative;width:100%;height:100%;min-height:680px">
+                        <div @ref="mapEl" style="position:absolute;inset:0;border-radius:12px;overflow:hidden"></div>
+
+                        @if (drawing)
+                        {
+                            <div style="position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1000;background:rgba(239,68,68,.92);color:#fff;padding:.5rem 1rem;border-radius:8px;font-size:.85rem">
+                                <i class="bi bi-geo-alt-fill me-1"></i> Клікніть на карті, щоб поставити зону «@newZoneTitle»
+                            </div>
+                        }
+                        @if (usingDemo && isReady)
+                        {
+                            <div style="position:absolute;bottom:28px;left:12px;z-index:1000;background:rgba(245,158,11,.92);color:#111;padding:.45rem .85rem;border-radius:8px;font-size:.8rem;max-width:360px">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i> Автопарк порожній — показано демо-ТЗ. Додайте техніку в панелі адміна.
+                            </div>
+                        }
+                        @if (!isReady && string.IsNullOrEmpty(mapError))
+                        {
+                            <div style="position:absolute;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.6);color:#fff;border-radius:12px">
+                                <div class="text-center"><i class="bi bi-hourglass-split" style="font-size:2rem"></i><div class="mt-2">Завантаження карти…</div></div>
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(mapError))
+                        {
+                            <div style="position:absolute;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.85);color:#f87171;border-radius:12px;padding:2rem;text-align:center">
+                                <div><i class="bi bi-exclamation-triangle-fill" style="font-size:2rem"></i><div class="mt-2">@mapError</div></div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+@code {
+    // ===== Моделі =====
+    private class MapVehicle
+    {
+        public string Plate = ""; public string Model = ""; public string Driver = "";
+        public string Status = "free"; public string RouteName = "";
+        public double[][]? Pts; public double[]? Cum;
+        public double Dist; public int Dir = 1; public int Wait;
+        public double Lat, Lng; public int Speed; public string Note = ""; public int InZoneId;
+        public double Total => Cum == null || Cum.Length == 0 ? 0 : Cum[^1];
+    }
+    private class ThreatZone
+    {
+        public int Id; public string Title = ""; public double Lat, Lng, Radius; public string Level = "danger";
+    }
+    private class RouteTemplate
+    {
+        public string Name = "";
+        public double[][] Waypoints = Array.Empty<double[]>();
+        public double[][] Pts = Array.Empty<double[]>();
+    }
+
+    // ===== Стан =====
+    private ElementReference mapEl;
+    private IJSObjectReference? module;
+    private DotNetObjectReference<MapMonitor>? self;
+    private System.Threading.Timer? timer;
+    private bool disposed;
+    private bool isReady;
+    private string mapError = "";
+    private bool usingDemo;
+
+    private List<MapVehicle> vehicles = new();
+    private List<ThreatZone> zones = new();
+    private List<string> alerts = new();
+    private string statusFilter = "all";
+    private string? selectedId;
+    private bool showRoutes = true;
+    private bool showZones = true;
+
+    private bool drawing;
+    private string newZoneTitle = "Зона загрози";
+    private int newZoneRadius = 500;
+    private string newZoneLevel = "danger";
+    private int zoneSeq = 1;
+
+    // Швидкість симуляції: метрів за один тик (1 с)
+    private const double BaseStepMeters = 110;
+
+    private bool CanEditZones => AuthService.CurrentUser?.Role != TransportIn.Models.UserRole.Driver;
+
+    private readonly List<RouteTemplate> routes = new()
+    {
+        new() { Name = "Склад Оболонь → Позняки", Waypoints = new[] { new[] { 50.5090, 30.4980 }, new[] { 50.4475, 30.5226 }, new[] { 50.3965, 30.6330 } } },
+        new() { Name = "Святошин → Лівобережна", Waypoints = new[] { new[] { 50.4580, 30.3640 }, new[] { 50.4408, 30.4880 }, new[] { 50.4515, 30.5987 } } },
+        new() { Name = "Академмістечко → Дарниця", Waypoints = new[] { new[] { 50.4647, 30.3552 }, new[] { 50.4475, 30.5226 }, new[] { 50.4560, 30.6320 } } },
+        new() { Name = "Троєщина → Борщагівка", Waypoints = new[] { new[] { 50.5195, 30.6000 }, new[] { 50.4527, 30.3639 } } },
+    };
+
+    private readonly double[][] depots =
+    {
+        new[] { 50.4010, 30.6250 }, new[] { 50.4690, 30.4180 }, new[] { 50.4300, 30.5700 }
+    };
+
+    protected override void OnInitialized()
+    {
+        if (AuthService.CurrentUser == null)
+        {
+            Navigation.NavigateTo("/");
+            return;
+        }
+
+        zones = new()
+        {
+            new() { Id = zoneSeq++, Title = "ДТП, Оболонський проспект", Lat = 50.4990, Lng = 30.4985, Radius = 300, Level = "danger" },
+            new() { Id = zoneSeq++, Title = "Обмеження руху, Хрещатик", Lat = 50.4475, Lng = 30.5226, Radius = 350, Level = "warning" },
+        };
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || AuthService.CurrentUser == null) return;
+        try
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/mapMonitor.js");
+            self = DotNetObjectReference.Create(this);
+            await module.InvokeVoidAsync("init", mapEl, self);
+            await module.InvokeVoidAsync("setZones", ZonesPayload());
+
+            await BuildRoutesAsync();
+            BuildVehicles();
+
+            await module.InvokeVoidAsync("setRoutes", vehicles
+                .Where(v => v.Pts != null)
+                .Select(v => new { id = v.Plate, points = v.Pts }).ToList());
+            await PushVehicles();
+
+            isReady = true;
+            StateHasChanged();
+            timer = new System.Threading.Timer(_ => { _ = InvokeAsync(TickAsync); }, null, 1000, 1000);
+        }
+        catch (Exception ex)
+        {
+            mapError = "Не вдалося завантажити карту: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    // ===== Побудова маршрутів і ТЗ =====
+    private async Task BuildRoutesAsync()
+    {
+        foreach (var rt in routes)
+        {
+            double[][]? road = null;
+            try { road = await module!.InvokeAsync<double[][]?>("getRoadRoute", (object)rt.Waypoints); } catch { }
+            rt.Pts = road is { Length: > 1 } ? road : rt.Waypoints; // запасний варіант: прямі лінії
+        }
+    }
+
+    private static double[] BuildCum(double[][] pts)
+    {
+        var cum = new double[pts.Length];
+        for (int i = 1; i < pts.Length; i++)
+            cum[i] = cum[i - 1] + Haversine(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+        return cum;
+    }
+
+    private void BuildVehicles()
+    {
+        var src = FleetService.GetAllVehicles()
+            .Take(8)
+            .Select(f => (Model: f.BrandModel ?? "", Plate: f.LicensePlate ?? "", Driver: f.AssignedDriver ?? ""))
+            .ToList();
+
+        usingDemo = src.Count == 0;
+        if (src.Count == 0)
+        {
+            src = new()
+            {
+                ("Mercedes Sprinter", "AA 1234 BP", ""),
+                ("Volvo FH16", "BC 0912 AK", ""),
+                ("MAN TGX", "AI 5678 CE", ""),
+            };
+        }
+
+        vehicles.Clear();
+        int routeCounter = 0;
+        for (int i = 0; i < src.Count; i++)
+        {
+            var v = new MapVehicle { Model = src[i].Model, Plate = src[i].Plate, Driver = src[i].Driver };
+            int kind = i % 4;
+
+            if (kind == 3)
+            {
+                var d = depots[(i / 4) % depots.Length];
+                v.Status = "free"; v.Lat = d[0]; v.Lng = d[1];
+            }
+            else
+            {
+                var rt = routes[routeCounter++ % routes.Count];
+                v.Pts = rt.Pts; v.Cum = BuildCum(rt.Pts); v.RouteName = rt.Name;
+                if (kind == 2) { v.Status = "loading"; v.Wait = 10; v.Dist = 0; }
+                else { v.Status = "moving"; v.Dist = v.Total * (0.1 + 0.25 * (i % 3)); }
+                (v.Lat, v.Lng) = PointAt(v.Pts, v.Cum, v.Dist);
+            }
+            vehicles.Add(v);
+        }
+    }
+
+    // ===== Симуляція руху =====
+    private async Task TickAsync()
+    {
+        if (disposed || !isReady) return;
+        Tick();
+        StateHasChanged();
+        try { await PushVehicles(); } catch { }
+    }
+
+    private void Tick()
+    {
+        foreach (var v in vehicles)
+        {
+            if (v.Pts == null || v.Cum == null) { v.Speed = 0; continue; }
+
+            var zone = ZoneAt(v.Lat, v.Lng);
+            int zid = zone?.Id ?? 0;
+            if (zid != v.InZoneId)
+            {
+                v.InZoneId = zid;
+                if (zone != null) AddAlert($"{v.Plate} увійшов у зону «{zone.Title}»");
+            }
+
+            if (zone?.Level == "danger")
+            {
+                if (v.Status != "blocked") AddAlert($"🚨 {v.Plate} зупинено: зона «{zone.Title}»");
+                v.Status = "blocked"; v.Speed = 0; v.Note = $"Зупинено: {zone.Title}";
+                continue;
+            }
+            if (v.Status == "blocked")
+            {
+                v.Status = "moving"; v.Note = "";
+                AddAlert($"✅ {v.Plate} відновив рух");
+            }
+
+            if (v.Status == "loading")
+            {
+                v.Speed = 0;
+                if (--v.Wait <= 0) { v.Dir = v.Dir == 1 ? -1 : 1; v.Status = "moving"; }
+                else continue;
+            }
+
+            double k = zone?.Level == "warning" ? 0.35 : 1.0;
+            v.Note = zone?.Level == "warning" ? $"Сповільнено: {zone.Title}" : "";
+            v.Speed = (int)Math.Round(45 * k);
+            v.Dist += v.Dir * BaseStepMeters * k;
+
+            if (v.Dist >= v.Total) { v.Dist = v.Total; v.Status = "loading"; v.Wait = 8; v.Speed = 0; }
+            else if (v.Dist <= 0) { v.Dist = 0; v.Status = "loading"; v.Wait = 8; v.Speed = 0; }
+
+            (v.Lat, v.Lng) = PointAt(v.Pts, v.Cum, v.Dist);
+        }
+    }
+
+    private static (double, double) PointAt(double[][] pts, double[] cum, double d)
+    {
+        if (d <= 0) return (pts[0][0], pts[0][1]);
+        if (d >= cum[^1]) return (pts[^1][0], pts[^1][1]);
+        int i = Array.BinarySearch(cum, d);
+        if (i < 0) i = ~i;
+        if (i == 0) return (pts[0][0], pts[0][1]);
+        double seg = cum[i] - cum[i - 1];
+        double t = seg <= 0 ? 0 : (d - cum[i - 1]) / seg;
+        return (pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t,
+                pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t);
+    }
+
+    private static double Haversine(double lat1, double lng1, double lat2, double lng2)
+    {
+        const double R = 6371000;
+        double dLat = (lat2 - lat1) * Math.PI / 180, dLng = (lng2 - lng1) * Math.PI / 180;
+        double a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                   Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180) *
+                   Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+        return 2 * R * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+    }
+
+    private ThreatZone? ZoneAt(double lat, double lng)
+    {
+        ThreatZone? best = null;
+        foreach (var z in zones)
+        {
+            if (Haversine(lat, lng, z.Lat, z.Lng) > z.Radius) continue;
+            if (best == null || (z.Level == "danger" && best.Level != "danger")) best = z;
+        }
+        return best;
+    }
+
+    private void AddAlert(string text)
+    {
+        alerts.Insert(0, $"{DateTime.Now:HH:mm:ss}  {text}");
+        if (alerts.Count > 6) alerts.RemoveAt(alerts.Count - 1);
+    }
+
+    // ===== Взаємодія з JS =====
+    private async Task PushVehicles()
+    {
+        if (module == null) return;
+        var payload = vehicles.Select(v => new
+        {
+            id = v.Plate,
+            model = v.Model,
+            lat = v.Lat,
+            lng = v.Lng,
+            status = v.Status,
+            visible = statusFilter == "all" || statusFilter == v.Status
+        }).ToList();
+        await module.InvokeVoidAsync("updateVehicles", payload);
+    }
+
+    private object ZonesPayload() => zones
+        .Select(z => new { id = z.Id, title = z.Title, lat = z.Lat, lng = z.Lng, radius = (int)z.Radius, level = z.Level })
+        .ToList();
+
+    [JSInvokable]
+    public Task OnVehicleClicked(string id) => InvokeAsync(async () =>
+    {
+        selectedId = id;
+        if (module != null) await module.InvokeVoidAsync("selectVehicle", id, false);
+        StateHasChanged();
+    });
+
+    [JSInvokable]
+    public Task OnMapClicked(double lat, double lng) => InvokeAsync(async () =>
+    {
+        if (!drawing) return;
+        var title = string.IsNullOrWhiteSpace(newZoneTitle) ? "Зона загрози" : newZoneTitle.Trim();
+        zones.Add(new ThreatZone
+            {
+                Id = zoneSeq++,
+                Title = title,
+                Lat = lat,
+                Lng = lng,
+                Radius = Math.Clamp(newZoneRadius, 100, 5000),
+                Level = newZoneLevel
+            });
+        AddAlert($"➕ Додано зону «{title}»");
+        drawing = false;
+        if (module != null)
+        {
+            await module.InvokeVoidAsync("setDrawing", false);
+            await module.InvokeVoidAsync("setZones", ZonesPayload());
+        }
+        StateHasChanged();
+    });
+
+    // ===== UI-дії =====
+    private async Task SetFilter(string f)
+    {
+        statusFilter = f;
+        await PushVehicles();
+    }
+
+    private async Task SelectVehicle(string id)
+    {
+        selectedId = id;
+        if (module != null) await module.InvokeVoidAsync("selectVehicle", id, true);
+    }
+
+    private async Task ClearSelection()
+    {
+        selectedId = null;
+        if (module != null) await module.InvokeVoidAsync("selectVehicle", null, false);
+    }
+
+    private async Task ApplyLayers()
+    {
+        if (module == null) return;
+        await module.InvokeVoidAsync("setLayerVisible", "routes", showRoutes);
+        await module.InvokeVoidAsync("setLayerVisible", "zones", showZones);
+    }
+
+    private async Task ResetView()
+    {
+        if (module != null) await module.InvokeVoidAsync("resetView");
+    }
+
+    private async Task FlyToZone(ThreatZone z)
+    {
+        if (module != null) await module.InvokeVoidAsync("flyTo", z.Lat, z.Lng, 15);
+    }
+
+    private async Task RemoveZone(ThreatZone z)
+    {
+        zones.Remove(z);
+        AddAlert($"➖ Видалено зону «{z.Title}»");
+        if (module != null) await module.InvokeVoidAsync("setZones", ZonesPayload());
+    }
+
+    private async Task StartDrawing()
+    {
+        drawing = true;
+        if (module != null) await module.InvokeVoidAsync("setDrawing", true);
+    }
+
+    private async Task StopDrawing()
+    {
+        drawing = false;
+        if (module != null) await module.InvokeVoidAsync("setDrawing", false);
+    }
+
+    // ===== Хелпери =====
+    private IEnumerable<MapVehicle> FilteredVehicles() =>
+        statusFilter == "all" ? vehicles : vehicles.Where(v => v.Status == statusFilter);
+
+    private MapVehicle? SelectedVehicle() => vehicles.FirstOrDefault(v => v.Plate == selectedId);
+    private int Count(string status) => vehicles.Count(v => v.Status == status);
+    private static int ProgressPercent(MapVehicle v) => v.Total <= 0 ? 0 : (int)Math.Round(v.Dist / v.Total * 100);
+
+    private static string StatusLabel(string s) => s switch
+    {
+        "free" => "Вільний",
+        "moving" => "В дорозі",
+        "loading" => "Завантаження",
+        "blocked" => "Тривога",
+        _ => s
+    };
+
+    private bool IsActive(string path) => Navigation.Uri.EndsWith(path, StringComparison.OrdinalIgnoreCase);
+
+    private string GetInitials(string? n)
+    {
+        if (string.IsNullOrWhiteSpace(n)) return "?";
+        var p = n.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return p.Length >= 2 ? $"{p[0][0]}{p[1][0]}".ToUpper() : n[..Math.Min(2, n.Length)].ToUpper();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        timer?.Dispose();
+        try
+        {
+            if (module != null)
+            {
+                await module.InvokeVoidAsync("dispose");
+                await module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        catch (Exception) { }
+        self?.Dispose();
+    }
+}

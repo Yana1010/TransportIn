@@ -1,30 +1,109 @@
 ﻿@page "/Error"
+@layout TransportIn.Components.Layout.AdminLayout
 @using System.Diagnostics
 
-<PageTitle>Error</PageTitle>
+@inject TransportIn.Services.AuthService AuthService
+@inject NavigationManager Navigation
 
-<h1 class="text-danger">Error.</h1>
-<h2 class="text-danger">An error occurred while processing your request.</h2>
+<PageTitle>Помилка | TransportIn</PageTitle>
 
-@if (ShowRequestId)
-{
-    <p>
-        <strong>Request ID:</strong> <code>@RequestId</code>
-    </p>
-}
+<div class="admin-layout">
+    <!-- ===== САЙДБАР ===== -->
+    <aside class="admin-sidebar">
+        <div class="sidebar-header">
+            <h4><i class="bi bi-truck-front-fill"></i> TransportIn</h4>
+            <small>Диспетчерський пульт</small>
+        </div>
+        <nav class="mt-3">
+            @if (AuthService.CurrentUser?.Role == TransportIn.Models.UserRole.Admin)
+            {
+                <a class="nav-link @(IsActive("/admin-dashboard") ? "active" : "")" href="/admin-dashboard"><i class="bi bi-grid-1x2-fill"></i> Панель адміна</a>
+            }
+            @if (AuthService.CurrentUser?.Role == TransportIn.Models.UserRole.Manager)
+            {
+                <a class="nav-link @(IsActive("/manager-dashboard") ? "active" : "")" href="/manager-dashboard"><i class="bi bi-people-fill"></i> Менеджер</a>
+            }
+            @if (AuthService.CurrentUser?.Role == TransportIn.Models.UserRole.Driver)
+            {
+                <a class="nav-link @(IsActive("/driver-dashboard") ? "active" : "")" href="/driver-dashboard"><i class="bi bi-person-badge-fill"></i> Водій</a>
+            }
+            <a class="nav-link @(IsActive("/map-monitor") ? "active" : "")" href="/map-monitor"><i class="bi bi-map"></i> Карта моніторингу</a>
+            @if (AuthService.CurrentUser?.Role != TransportIn.Models.UserRole.Driver)
+            {
+                <a class="nav-link @(IsActive("/history") ? "active" : "")" href="/history"><i class="bi bi-clock-history"></i> Історія</a>
+            }
+            <a class="nav-link @(IsActive("/counter") ? "active" : "")" href="/counter"><i class="bi bi-graph-up-arrow"></i> Аналітика</a>
+        </nav>
+    </aside>
 
-<h3>Development Mode</h3>
-<p>
-    Swapping to <strong>Development</strong> environment will display more detailed information about the error that occurred.
-</p>
-<p>
-    <strong>The Development environment shouldn't be enabled for deployed applications.</strong>
-    It can result in displaying sensitive information from exceptions to end users.
-    For local debugging, enable the <strong>Development</strong> environment by setting the <strong>ASPNETCORE_ENVIRONMENT</strong> environment variable to <strong>Development</strong>
-    and restarting the app.
-</p>
+    <!-- ===== ОСНОВНИЙ КОНТЕНТ ===== -->
+    <main class="admin-main">
+        <div class="content-section d-flex align-items-center justify-content-center" style="min-height: calc(100vh - 70px);">
 
-@code{
+            <!-- Картка помилки -->
+            <div class="modern-card text-center" style="max-width: 650px; width: 100%; border-top: 4px solid var(--danger-red);">
+                <div class="card-body-custom">
+
+                    <!-- Велика іконка помилки -->
+                    <div class="mb-4">
+                        <i class="bi bi-exclamation-octagon-fill" style="font-size: 4rem; color: var(--danger-red);"></i>
+                    </div>
+
+                    <!-- Основне повідомлення -->
+                    <h2 class="mb-3" style="color: var(--text-primary); font-weight: 700;">Сталася системна помилка</h2>
+                    <p class="mb-4" style="color: var(--text-secondary); font-size: 1.1rem; line-height: 1.6;">
+                        На жаль, під час обробки вашого запиту виникла непередбачена помилка.
+                        Будь ласка, спробуйте оновити сторінку або поверніться на головну панель.
+                    </p>
+
+                    <!-- Блок з Request ID -->
+                    @if (ShowRequestId)
+                    {
+                        <div class="mb-4 p-3" style="background: var(--bg-input); border-radius: 8px; border: 1px solid var(--border-color);">
+                            <small class="text-uppercase fw-bold" style="color: var(--text-secondary); font-size: 0.75rem; letter-spacing: 0.5px;">
+                                Ідентифікатор запиту (Request ID)
+                            </small>
+                            <div class="code-text mt-2" style="font-size: 1rem; background: transparent; border: none; padding: 0; color: var(--text-primary);">
+                                @RequestId
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Попередження про режим розробки -->
+                    <div class="text-start mb-4 p-3" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; color: #fbbf24; font-size: 0.9rem;">
+                        <div class="d-flex align-items-start gap-3">
+                            <i class="bi bi-info-circle-fill mt-1" style="font-size: 1.2rem;"></i>
+                            <div>
+                                <strong style="color: #fbbf24;">Режим розробки (Development Mode)</strong>
+                                <p class="mb-1 mt-1" style="color: var(--text-secondary);">
+                                    Перемикання на середовище <strong style="color: var(--text-primary);">Development</strong> відобразить детальну інформацію про помилку.
+                                </p>
+                                <p class="mb-0" style="color: var(--text-secondary); font-size: 0.85rem;">
+                                    ⚠️ Не вмикайте цей режим у робочих (deployed) додатках, оскільки це може розкрити конфіденційні дані винятків кінцевим користувачам.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Кнопки дій -->
+                    <div class="d-flex gap-3 justify-content-center mt-4">
+                        <button class="btn-modern"
+                                style="background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color);"
+                                @onclick="ReloadPage">
+                            <i class="bi bi-arrow-clockwise"></i> Оновити сторінку
+                        </button>
+                        <button class="btn-modern btn-add" @onclick="GoHome" style="text-decoration: none; border: none; cursor: pointer;">
+                            <i class="bi bi-house-door"></i> На головну панель
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+@code {
     [CascadingParameter]
     private HttpContext? HttpContext { get; set; }
 
@@ -33,4 +112,23 @@
 
     protected override void OnInitialized() =>
         RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+
+    private bool IsActive(string path) => Navigation.Uri.EndsWith(path, StringComparison.OrdinalIgnoreCase);
+
+    private void ReloadPage()
+    {
+        Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+    }
+
+    private void GoHome()
+    {
+        var target = AuthService.CurrentUser?.Role switch
+        {
+            TransportIn.Models.UserRole.Admin => "/admin-dashboard",
+            TransportIn.Models.UserRole.Manager => "/manager-dashboard",
+            TransportIn.Models.UserRole.Driver => "/driver-dashboard",
+            _ => "/"
+        };
+        Navigation.NavigateTo(target);
+    }
 }
